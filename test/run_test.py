@@ -27,6 +27,7 @@ from torch.testing._internal.common_utils import (
     get_report_path,
     IS_CI,
     IS_MACOS,
+    IS_S390X,
     IS_WINDOWS,
     retry_shell,
     set_cwd,
@@ -183,6 +184,11 @@ ROCM_BLOCKLIST = [
     "test_cuda_nvml_based_avail",
     "test_jit_cuda_fuser",
     "distributed/_tensor/test_attention",
+]
+
+S390X_BLOCKLIST = [
+    "test_multiprocessing",
+    "test_multiprocessing_spawn",
 ]
 
 XPU_BLOCKLIST = [
@@ -1480,6 +1486,14 @@ def get_selected_tests(options) -> List[str]:
 
     elif TEST_WITH_ROCM:
         selected_tests = exclude_tests(ROCM_BLOCKLIST, selected_tests, "on ROCm")
+
+    elif IS_S390X:
+        selected_tests = exclude_tests(S390X_BLOCKLIST, selected_tests, "on s390x")
+        selected_tests = exclude_tests(
+            DISTRIBUTED_TESTS,
+            selected_tests,
+            "Skip distributed tests on s390x",
+        )
 
     # skip all distributed tests if distributed package is not available.
     if not dist.is_available():

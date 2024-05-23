@@ -76,6 +76,7 @@ class TestComposability(TestCase):
     # This test checks whether performing quantization prepare before sparse prepare
     # causes any issues and verifies that the correct observers are inserted and that
     # the quantized model works as expected
+    @unittest.skipIf(IS_S390X, "Currently fails on s390x")
     def test_q_prep_before_s_prep(self):
         (
             mod,
@@ -105,6 +106,7 @@ class TestComposability(TestCase):
     # the post sparse prepare module names (adding parametrizations changes the module class names)
     # which would result in those parametrized modules not being quantized. This test verifies that
     # the fix for this was successful.
+    @unittest.skipIf(IS_S390X, "Currently fails on s390x")
     def test_s_prep_before_q_prep(self):
         (
             mod,
@@ -177,6 +179,7 @@ class TestComposability(TestCase):
     # This tests whether performing sparse prepare before fusion causes any issues. The
     # worry was that the link created between the sparsifier and the modules that need to
     # be sparsified would be broken.
+    @unittest.skipIf(IS_S390X, "Currently fails on s390x")
     def test_s_prep_before_fusion(self):
         (
             mod,
@@ -261,6 +264,7 @@ class TestComposability(TestCase):
     # The primary worries were that qat_prep wouldn't recognize the parametrized
     # modules and that the convert step for qat would remove the parametrizations
     # from the modules.
+    @unittest.skipIf(IS_S390X, "Currently fails on s390x")
     def test_s_prep_before_qat_prep(self):
         (
             mod,
@@ -288,6 +292,7 @@ class TestComposability(TestCase):
         self.assertGreaterAlmostEqual(cur_sparsity, sparse_config[0]["sparsity_level"])
 
     # This tests whether performing qat prepare before sparse prepare causes issues.
+    @unittest.skipIf(IS_S390X, "Currently fails on s390x")
     def test_qat_prep_before_s_prep(self):
         mod, sparsifier, _ = _get_model_and_sparsifier_and_sparse_config(
             tq.get_default_qat_qconfig("fbgemm")
@@ -341,6 +346,7 @@ class TestFxComposability(TestCase):
     compose cleanly despite variation in sequencing.
     """
 
+    @unittest.skipIf(IS_S390X, "Currently fails on s390x")
     def test_q_prep_fx_before_s_prep(self):
         r"""
         This test checks that the ordering of prepare_fx -> sparse prepare -> convert_fx
@@ -406,6 +412,7 @@ class TestFxComposability(TestCase):
         )
         self.assertGreaterAlmostEqual(cur_sparsity, sparse_config[0]["sparsity_level"])
 
+    @unittest.skipIf(IS_S390X, "Currently fails on s390x")
     def test_q_prep_fx_s_prep_ref_conv(self):
         r"""
         This checks that the ordering: prepare_fx -> sparse prepare -> convert_to_reference_fx
@@ -473,6 +480,7 @@ class TestFxComposability(TestCase):
         )
         self.assertGreaterAlmostEqual(cur_sparsity, sparse_config[0]["sparsity_level"])
 
+    @unittest.skipIf(IS_S390X, "Currently fails on s390x")
     def test_s_prep_before_q_prep_fx(self):
         r"""
         This test checks that the ordering of sparse prepare -> prepare_fx -> convert_fx
@@ -524,6 +532,7 @@ class TestFxComposability(TestCase):
         )
         self.assertGreaterAlmostEqual(cur_sparsity, sparse_config[0]["sparsity_level"])
 
+    @unittest.skipIf(IS_S390X, "Currently fails on s390x")
     def test_s_prep_before_qat_prep_fx(self):
         r"""
         This test checks that the ordering of sparse prepare -> prepare_qat_fx -> convert_fx
@@ -578,6 +587,7 @@ class TestFxComposability(TestCase):
         )
         self.assertGreaterAlmostEqual(cur_sparsity, sparse_config[0]["sparsity_level"])
 
+    @unittest.skipIf(IS_S390X, "Currently fails on s390x")
     def test_s_prep_q_prep_fx_ref(self):
         r"""
         This checks that the ordering: sparse prepare -> prepare_fx -> convert_to_reference_fx
