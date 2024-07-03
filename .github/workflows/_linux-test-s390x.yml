@@ -204,8 +204,8 @@ jobs:
             "${DOCKER_IMAGE}"
           )
           echo "DOCKER_CONTAINER_ID=${container_name}" >> "${GITHUB_ENV}"
-          docker exec -t "${container_name}" sh -c "pip install -r .ci/docker/requirements-ci.txt"
-          docker exec -t "${container_name}" sh -c "pip install $(echo dist/*.whl)[opt-einsum] && ${TEST_COMMAND}"
+          docker exec -t "${container_name}" sh -c "pip3 install -r .ci/docker/requirements-ci.txt"
+          docker exec -t "${container_name}" sh -c "pip3 install $(echo dist/*.whl)[opt-einsum] && ${TEST_COMMAND}"
 
       - name: Upload pytest cache if tests failed
         uses: ./.github/actions/pytest-cache-upload
