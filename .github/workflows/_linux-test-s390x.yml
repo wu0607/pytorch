@@ -204,6 +204,8 @@ jobs:
             "${DOCKER_IMAGE}"
           )
           echo "DOCKER_CONTAINER_ID=${container_name}" >> "${GITHUB_ENV}"
+          # building grpcio requires system openssl on s390x
+          docker exec -t "${container_name}" sh -c "dnf install -y openssl-devel ; env GRPC_PYTHON_BUILD_SYSTEM_OPENSSL=True pip3 install grpcio"
           docker exec -t "${container_name}" sh -c "pip3 install -r .ci/docker/requirements-ci.txt"
           docker exec -t "${container_name}" sh -c "pip3 install $(echo dist/*.whl)[opt-einsum] && ${TEST_COMMAND}"
 
