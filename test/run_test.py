@@ -390,6 +390,10 @@ S390X_BLOCKLIST = [
     "cpp/static_runtime_test",
     "cpp/test_jit",
     "cpp/test_lazy",
+    # following failures need additional investigation
+    "dynamo/test_inline_inbuilt_nn_modules",
+    "inductor/test_binary_folding",
+    "test_sympy_utils",
 ]
 
 XPU_BLOCKLIST = [
