@@ -394,6 +394,8 @@ S390X_BLOCKLIST = [
     "dynamo/test_inline_inbuilt_nn_modules",
     "inductor/test_binary_folding",
     "test_sympy_utils",
+    "inductor/test_ordered_set",
+    "inductor/test_cpu_select_algorithm",
 ]
 
 XPU_BLOCKLIST = [
