@@ -1,4 +1,4 @@
-name: linux-build
+name: linux-build-s390x
 
 on:
   workflow_call:

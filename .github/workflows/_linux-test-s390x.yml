@@ -1,4 +1,4 @@
-name: linux-test
+name: linux-test-s390x
 
 on:
   workflow_call:
