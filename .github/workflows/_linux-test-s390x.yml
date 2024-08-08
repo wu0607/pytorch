@@ -30,9 +30,9 @@ on:
           Set the maximum (in minutes) how long the workflow should take to finish
       use-gha:
         required: false
-        type: string
-        default: ""
-        description: If set to any value, upload to GHA. Otherwise upload to S3.
+        description: If set to true, upload to GHA. Otherwise upload to S3.
+        type: boolean
+        default: false
       dashboard-tag:
         required: false
         type: string
@@ -54,7 +54,7 @@ jobs:
       - name: Checkout PyTorch
         uses: pytorch/pytorch/.github/actions/checkout-pytorch@main
         with:
-          no-sudo: ${{ inputs.build_environment == 'linux-s390x-binary-manywheel' }}
+          no-sudo: ${{ inputs.build-environment == 'linux-s390x-binary-manywheel' }}
 
       - name: Check if in a ARC runner
         shell: bash
@@ -205,7 +205,7 @@ jobs:
           )
           echo "DOCKER_CONTAINER_ID=${container_name}" >> "${GITHUB_ENV}"
           # building grpcio requires system openssl on s390x
-          docker exec -t "${container_name}" sh -c "dnf install -y openssl-devel ; env GRPC_PYTHON_BUILD_SYSTEM_OPENSSL=True pip3 install grpcio"
+          docker exec -t "${container_name}" sh -c "dnf install -y openssl-devel ; env GRPC_PYTHON_BUILD_SYSTEM_OPENSSL=True pip3 install grpcio==1.65.4"
           docker exec -t "${container_name}" sh -c "pip3 install -r .ci/docker/requirements-ci.txt"
           docker exec -t "${container_name}" sh -c "pip3 install $(echo dist/*.whl)[opt-einsum] && ${TEST_COMMAND}"
 
@@ -241,7 +241,6 @@ jobs:
         with:
           file-suffix: ${{ github.job }}-${{ matrix.config }}-${{ matrix.shard }}-${{ matrix.num_shards }}-${{ matrix.runner }}_${{ steps.get-job-id.outputs.job-id }}
           use-gha: ${{ inputs.use-gha }}
-          s3-bucket: ${{ inputs.s3-bucket }}
 
       - name: Collect backtraces from coredumps (if any)
         if: always()
