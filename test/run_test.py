@@ -5,6 +5,7 @@ import copy
 import glob
 import json
 import os
+import platform
 import re
 import shutil
 import signal
@@ -27,7 +28,6 @@ from torch.testing._internal.common_utils import (
     get_report_path,
     IS_CI,
     IS_MACOS,
-    IS_S390X,
     IS_WINDOWS,
     retry_shell,
     set_cwd,
@@ -84,6 +84,7 @@ RERUN_DISABLED_TESTS = os.getenv("PYTORCH_TEST_RERUN_DISABLED_TESTS", "0") == "1
 DISTRIBUTED_TEST_PREFIX = "distributed"
 INDUCTOR_TEST_PREFIX = "inductor"
 IS_SLOW = "slow" in TEST_CONFIG or "slow" in BUILD_ENVIRONMENT
+IS_S390X = platform.machine() == "s390x"
 
 
 # Note [ROCm parallel CI testing]
