@@ -1,5 +1,28 @@
+include(CheckCXXSourceCompiles)
 # Check if the processor is an ARM and if Neon instruction are available on the machine where
 # the project is compiled.
+SET(SVE_CODE "
+#include <arm_sve.h>
+
+#include <cstdint>
+
+int main() {
+  constexpr int DATA_LEN = 8;
+
+  svbool_t pg = svptrue_b32();
+  float dataF32[DATA_LEN] = {3.14,   1.592, 65.35, 897.93,
+                             2.3846, 2.6,   4.33,  83.2};
+  float16_t dataF16[DATA_LEN] = {3.14,   1.592, 65.35, 897.93,
+                                 2.3846, 2.6,   4.33,  83.2};
+
+  for (int i = 0; i < DATA_LEN; i += svcntw()) {
+    svfloat32_t f32vec = svld1_f32(pg, &dataF32[i]);
+    svfloat16_t f16vec = svld1_f16(pg, &dataF16[i]);
+  }
+
+  return 0;
+}
+")
 
 IF(CMAKE_SYSTEM_NAME MATCHES "Linux")
    EXECUTE_PROCESS(COMMAND cat /proc/cpuinfo OUTPUT_VARIABLE CPUINFO)
@@ -21,6 +44,16 @@ IF(CMAKE_SYSTEM_NAME MATCHES "Linux")
    ELSE (ASIMD_TRUE)
       set(ASIMD_FOUND false CACHE BOOL "ASIMD/NEON available on host")
    ENDIF (ASIMD_TRUE)
+
+   set(CMAKE_REQUIRED_FLAGS_SAVE ${CMAKE_REQUIRED_FLAGS})
+   set(CMAKE_REQUIRED_FLAGS "-march=armv8-a+sve")
+   CHECK_CXX_SOURCE_COMPILES("${SVE_CODE}" CXX_HAS_SVE)
+   IF (CXX_HAS_SVE)
+      set(CXX_SVE_FOUND true CACHE BOOL "SVE available on host")
+   ELSE (CXX_HAS_SVE)
+      set(CXX_SVE_FOUND false CACHE BOOL "SVE not available on host")
+   ENDIF (CXX_HAS_SVE)
+   set(CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS_SAVE})
 
    #Find the processor type (for now OMAP3 or OMAP4)
    STRING(REGEX REPLACE "^.*(OMAP3).*$" "\\1" OMAP3_THERE "${CPUINFO}")
@@ -58,6 +91,16 @@ ELSEIF(CMAKE_SYSTEM_NAME MATCHES "Darwin")
        ENDIF (NEON_TRUE)
    ENDIF()
 
+   set(CMAKE_REQUIRED_FLAGS_SAVE ${CMAKE_REQUIRED_FLAGS})
+   set(CMAKE_REQUIRED_FLAGS "-march=armv8-a+sve")
+   CHECK_CXX_SOURCE_COMPILES("${SVE_CODE}" CXX_HAS_SVE)
+   IF (CXX_HAS_SVE)
+      set(CXX_SVE_FOUND true CACHE BOOL "SVE available on host")
+   ELSE (CXX_HAS_SVE)
+      set(CXX_SVE_FOUND false CACHE BOOL "SVE not available on host")
+   ENDIF (CXX_HAS_SVE)
+   set(CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS_SAVE})
+
 ELSEIF(CMAKE_SYSTEM_NAME MATCHES "Windows")
    # TODO
    set(CORTEXA8_FOUND   false CACHE BOOL "OMAP3 not available on host")
@@ -79,3 +122,8 @@ if(NOT CORTEXA9_FOUND)
       MESSAGE(STATUS "No OMAP4 processor on this machine.")
 endif(NOT CORTEXA9_FOUND)
 mark_as_advanced(NEON_FOUND)
+
+if(NOT CXX_SVE_FOUND)
+      MESSAGE(STATUS "Could not find compiler support for SVE on this machine.")
+endif(NOT CXX_SVE_FOUND)
+mark_as_advanced(CXX_SVE_FOUND)
