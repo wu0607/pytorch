@@ -397,6 +397,7 @@ S390X_BLOCKLIST = [
     "test_sympy_utils",
     "inductor/test_ordered_set",
     "inductor/test_cpu_select_algorithm",
+    "export/test_converter",
 ]
 
 XPU_BLOCKLIST = [
