@@ -52,7 +52,7 @@ class VecISA:
     # In fbcode however, we are using the same compiler for pytorch and for inductor codegen,
     # making the runtime check unnecessary.
     _avx_code = """
-#if defined(CPU_CAPABILITY_AVX512) || defined(CPU_CAPABILITY_AVX2) || defined(CPU_CAPABILITY_ZVECTOR) || defined(CPU_CAPABILITY_NEON) || defined(CPU_CAPABILITY_VSX)
+#if defined(CPU_CAPABILITY_AVX512) || defined(CPU_CAPABILITY_AVX2) || defined(CPU_CAPABILITY_ZVECTOR) || defined(CPU_CAPABILITY_NEON) || defined(CPU_CAPABILITY_VSX) || defined(CPU_CAPABILITY_SVE)
 #include <ATen/cpu/vec/functional.h>
 #include <ATen/cpu/vec/vec.h>
 #endif
@@ -159,6 +159,20 @@ class VecNEON(VecISA):
 
     def __str__(self) -> str:
         return "asimd"  # detects the presence of advanced SIMD on armv8-a kernels
+
+    __hash__: Callable[[VecISA], Any] = VecISA.__hash__
+
+@dataclasses.dataclass
+class VecSVE(VecISA):
+    # this function can be repurposed for SVE with variable vec length
+    _bit_width = 256  
+    _macro =  ["CPU_CAPABILITY_SVE", "CPU_CAPABILITY_SVE256"] 
+
+    _arch_flags = "-march=armv8-a+sve -msve-vector-bits=256"
+    _dtype_nelements = {torch.float: 8, torch.bfloat16: 16, torch.float16: 16}
+
+    def __str__(self) -> str:
+        return "asimd"
 
     __hash__: Callable[[VecISA], Any] = VecISA.__hash__
 
@@ -306,9 +320,22 @@ def x86_isa_checker() -> List[str]:
 
     return supported_isa
 
+def _is_arm_neoverse_v1() -> bool:
+    # reference: https://github.com/ARM-software/ComputeLibrary/blob/main/src/common/cpuinfo/CpuModel.cpp
+    
+    with open("/proc/cpuinfo") as _cpuinfo:
+        while True:
+            line = _cpuinfo.readline()
+            if not line:
+                break
+            is_v1 = re.match(r"^CPU\spart(.*):\s0xd40(\n)$", line)
+            if is_v1:
+                return True
+        return False
+
 
 invalid_vec_isa = InvalidVecISA()
-supported_vec_isa_list = [VecAMX(), VecAVX512(), VecAVX2(), VecNEON()]
+supported_vec_isa_list = [VecAMX(), VecAVX512(), VecAVX2(), VecNEON(), VecSVE()]
 
 
 # Cache the cpuinfo to avoid I/O overhead. Meanwhile, the cpuinfo content
@@ -340,7 +367,10 @@ def valid_vec_isa_list() -> List[VecISA]:
     elif arch == "ppc64le":
         isa_list.append(VecVSX())
     elif arch == "aarch64":
-        isa_list.append(VecNEON())
+        if _is_arm_neoverse_v1():
+            isa_list.append(VecSVE())
+        else: 
+            isa_list.append(VecNEON())
     elif arch in ["x86_64", "AMD64"]:
         """
         arch value is x86_64 on Linux, and the value is AMD64 on Windows.
