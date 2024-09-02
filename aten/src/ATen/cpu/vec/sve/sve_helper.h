@@ -61,3 +61,4 @@ typedef svfloat64_t vls_float64_t __attribute__((arm_sve_vector_bits(VECTOR_WIDT
 #define ALL_F64_FALSE_MASK svreinterpret_f64_s64(ALL_S64_FALSE_MASK)
 
 #endif // defined(CPU_CAPABILITY_SVE)
+
