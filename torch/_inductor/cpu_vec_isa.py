@@ -320,16 +320,19 @@ def x86_isa_checker() -> List[str]:
 
     return supported_isa
 
+@functools.lru_cache(maxsize=None)
 def _is_arm_neoverse_v1() -> bool:
     # reference: https://github.com/ARM-software/ComputeLibrary/blob/main/src/common/cpuinfo/CpuModel.cpp
-    
-    with open("/proc/cpuinfo") as _cpuinfo:
-        line = _cpuinfo.readline()
-        while line:
-            is_v1 = re.match(r"^CPU\spart(.*):\s0xd40(\n)$", line)
-            if is_v1:
-                return True
+    try:
+        with open("/proc/cpuinfo") as _cpuinfo:
             line = _cpuinfo.readline()
+            while line:
+                is_v1 = re.match(r"^CPU\spart(.*):\s0xd40(\n)$", line)
+                if is_v1:
+                    return True
+                line = _cpuinfo.readline()
+            return False
+    except:
         return False
 
 
