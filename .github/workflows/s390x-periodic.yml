@@ -60,7 +60,7 @@ jobs:
       id-token: write
       contents: read
     name: linux-manylinux-2_28-py3-cpu-s390x
-    uses: ./.github/workflows/_linux-test-s390x.yml
+    uses: ./.github/workflows/_linux-test.yml
     needs:
       - linux-manylinux-2_28-py3-cpu-s390x-build
       - target-determination
@@ -68,4 +68,4 @@ jobs:
       build-environment: linux-s390x-binary-manywheel
       docker-image: pytorch/manylinuxs390x-builder:cpu-s390x-main
       test-matrix: ${{ needs.linux-manylinux-2_28-py3-cpu-s390x-build.outputs.test-matrix }}
-      use-gha: true
+      use-gha: "yes"
