@@ -1,4 +1,5 @@
 # Owner(s): ["module: inductor"]
+import contextlib
 import os
 import unittest
 from typing import Callable, List, Optional
@@ -878,6 +879,59 @@ class TestTuningProcess(TestCase):
             self.assertEqual(timings[choice2], choice2.bmreq.value)
 
             tuning_pool.terminate()
+
+
+@instantiate_parametrized_tests
+class TestPrologueFusion(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._stack = contextlib.ExitStack()
+        cls._stack.enter_context(
+            config.patch(
+                {
+                    "max_autotune": True,
+                    "prologue_fusion": True,
+                    "benchmark_epilogue_fusion": False,
+                }
+            )
+        )
+
+    def test_upcast(self):
+        M = N = K = 256
+
+        x = torch.rand([M, K], dtype=torch.float16, device="cuda")
+        y = torch.rand([M, K], dtype=torch.float, device="cuda")
+
+        def foo(x, y):
+            return x.to(y.dtype) @ y
+
+        out, code = run_and_get_code(torch.compile(foo), x, y)
+        self.assertEqual(out, foo(x, y), atol=0.05, rtol=0.05)
+
+        # just emit a single kernel
+        FileCheck().check("def call").check_count(".run", 1, exactly=True).run(code[0])
+
+        f = FileCheck().check("def call")
+        # single allocation, two deallocations
+        f.check_count("empty_strided", 1, exactly=True).check_count(
+            "del", count=2, exactly=True
+        )
+        f.run(code[0])
+
+    def test_downcast(self):
+        # per heuristics, dont fuse a downcast into a mm because it would lead to more reads inside kernel
+        M = N = K = 256
+        x = torch.rand([M, K], dtype=torch.float, device="cuda")
+        y = torch.rand([M, K], dtype=torch.float16, device="cuda")
+
+        def foo(x, y):
+            return x.to(y.dtype) @ y
+
+        out, code = run_and_get_code(torch.compile(foo), x, y)
+        self.assertEqual(out, foo(x, y), atol=0.05, rtol=0.05)
+        # two kernels
+        FileCheck().check("def call").check_count(".run", 2, exactly=True).run(code[0])
 
 
 if __name__ == "__main__":

@@ -507,6 +507,23 @@ class BaseSchedulerNode:
 
     @cache_on_self
     def get_read_write_buffers_sizes(self) -> int:
+        return self.get_read_write_buffers_sizes_impl(
+            include_reads=True, include_writes=True
+        )
+
+    def get_read_buffer_sizes(self) -> int:
+        return self.get_read_write_buffers_sizes_impl(
+            include_reads=True, include_writes=False
+        )
+
+    def get_write_buffer_sizes(self) -> int:
+        return self.get_read_write_buffers_sizes_impl(
+            include_reads=False, include_writes=True
+        )
+
+    def get_read_write_buffers_sizes_impl(
+        self, include_reads: bool, include_writes: bool
+    ) -> int:
         """
         Counting the number of bytes accessed for a kernel is
         surprisingly tricky. In particular, there is a differentiation
@@ -548,11 +565,25 @@ class BaseSchedulerNode:
         else:
             node_numel = int(1e9)
         buf_accesses = collections.defaultdict(list)
-        for dep in self.read_writes.reads | self.read_writes.writes:
-            buf_accesses[dep.name].append(dep)
 
-        reads = OrderedSet(dep.name for dep in self.read_writes.reads)
-        writes = OrderedSet(dep.name for dep in self.read_writes.writes)
+        if include_reads:
+            for dep in self.read_writes.reads:
+                buf_accesses[dep.name].append(dep)
+
+        if include_writes:
+            for dep in self.read_writes.writes:
+                buf_accesses[dep.name].append(dep)
+
+        reads = (
+            OrderedSet(dep.name for dep in self.read_writes.reads)
+            if include_reads
+            else OrderedSet()
+        )
+        writes = (
+            OrderedSet(dep.name for dep in self.read_writes.writes)
+            if include_writes
+            else OrderedSet()
+        )
 
         def is_materialized(buf: str, snodes: Sequence[BaseSchedulerNode]) -> bool:
             users = self.scheduler.name_to_buf[buf].users
@@ -703,6 +734,11 @@ class BaseSchedulerNode:
 
     def get_template_node(self) -> Optional[ir.TemplateBuffer]:
         return None
+
+    def get_template_node_or_throw(self) -> ir.TemplateBuffer:
+        template = self.get_template_node()
+        assert template is not None
+        return template
 
 
 class WhyNoFuse:
@@ -2399,8 +2435,10 @@ class Scheduler:
         Otherwise, return True if fusion can brings speedup.
         """
 
-        is_multi_template = node1.is_template() and isinstance(
-            node1.get_template_node(), ir.MultiTemplateBuffer
+        is_multi_template = any(
+            n.is_template()
+            and isinstance(n.get_template_node(), ir.MultiTemplateBuffer)
+            for n in (node1, node2)
         )
         if not config.benchmark_fusion and not is_multi_template:
             return True
@@ -2451,14 +2489,24 @@ class Scheduler:
                         red_text(f"{ms_fused / (ms1 + ms2):.3f}"),
                     )
 
-        if isinstance(node1, SchedulerNode) and isinstance(
-            node1.node, ir.MultiTemplateBuffer
+        # After the succesful fusion with Template, we finalize its config.
+        # Subsequently we benchmark but dont update. Checking for SchedulerNode, instead of FusedSchedulerNode
+        # accomplishes this.
+        if is_multi_template and any(
+            n.get_template_node() is not None and isinstance(n, SchedulerNode)
+            for n in (node1, node2)
         ):
-            multi_node = node1.node
-            choice_timings = multi_node.choice_timings
+            epilogue_fusion = node1.get_template_node() is not None
 
+            multi_node = node1.node if epilogue_fusion else node2.node
+            assert isinstance(multi_node, ir.MultiTemplateBuffer)
+            choice_timings = multi_node.choice_timings
             _, ms1 = multi_node.get_min_choice()
-            ms2, path2 = self.benchmark_fused_nodes(node_list_2)
+
+            non_template_nodes = node_list_2 if epilogue_fusion else node_list_1
+
+            ms2, path2 = self.benchmark_fused_nodes(non_template_nodes)
+            # breakpoint()
 
             min_ms_fused = float("inf")
             ms_fused_choice = None
@@ -2480,7 +2528,7 @@ class Scheduler:
 
                 # TODO - parallel compile triton templates
                 # TODO - should prune/skip choices that are not within certain % of best choice
-                with node1.node.swap_as_triton_caller(choice):
+                with multi_node.swap_as_triton_caller(choice):
                     ms_fused, _ = self.benchmark_fused_nodes(node_list_fused)
 
                     if ms_fused < min_ms_fused:
@@ -2492,7 +2540,7 @@ class Scheduler:
             # after we do a fusion, we finalize a triton template.
             # TODO - could preserve multi template and choices for subsequent fusions
             if min_ms_fused < (ms1 + ms2) and ms_fused_choice is not None:
-                node1.node.finalize_as_triton_caller(ms_fused_choice)
+                multi_node.finalize_as_triton_caller(ms_fused_choice)
                 return True
             else:
                 return False
@@ -2914,12 +2962,51 @@ class Scheduler:
             return False
 
         if node2.is_template():
-            why("templates can only fuse epilogues")
-            return False
+            if not config.prologue_fusion:
+                why("prologue fusion turned off")
+                return False
+
+            template = node2.get_template_node_or_throw()
+            allowed_prologue_inps = template.allowed_prologue_inps
+
+            unsupported_prologue_args = (
+                OrderedSet(inp.get_name() for inp in template.inputs)
+                - allowed_prologue_inps
+            )
+
+            if node1.get_buffer_names() & unsupported_prologue_args:
+                why(
+                    "prologue fusion not implemented for kernel or for these kernel inputs"
+                )
+                return False
+
+            if node1.has_aliasing_or_mutation() or node1.has_aliasing_or_mutation():
+                why("template prologue can only fuse functional pointwise nodes")
+                return False
+
+            # TODO - could potentially relax constraint if node is used multiple times inside template
+            if (
+                not len(node1.outputs) == 1
+                and len(node1.outputs[0].users) == 1
+                and node1.outputs[0].users[0].node is node2
+            ):
+                why("template prologue can only fuse nodes with a single use")
+                return False
+
+            read_bytes = node1.get_read_buffer_sizes()
+            write_bytes = node1.get_write_buffer_sizes()
+
+            # Initially, only do fusions which will result in fewer memory accesses inside of the template to avoid
+            # potential bad cache behavior and shared memory use.
+            # we also want to avoid benchmarking reliably unprofitable fusions like downcasts from fp32 -> fp16 inside kernel.
+            # allowing gathers by allowing increasing write_bytes by small factor
+            # TODO - make configurable per input, for insance, bias can fuse fp32 -> fp16 profitably
+            if read_bytes > (write_bytes * 1.1):
+                why("prologue fusion will not increase amount of bytes read in kernel")
+                return False
+
         if node1.is_template() and (
-            node2.has_aliasing_or_mutation()
-            or node2.is_reduction()
-            or not config.epilogue_fusion
+            node2.has_aliasing_or_mutation() or node2.is_reduction()
         ):
             why("template epilogue not satisfied")
             return False
@@ -3126,7 +3213,7 @@ class Scheduler:
 
     def score_fusion(
         self, node1: BaseSchedulerNode, node2: BaseSchedulerNode
-    ) -> Tuple[bool, bool, int, int]:
+    ) -> Tuple[int, bool, int, int]:
         """
         Assign a score (higher comes first) to the fusion of node1
         and node2.  When different fusions conflict with each other,
@@ -3141,8 +3228,18 @@ class Scheduler:
             abs(node1.min_order - node2.max_order),
             abs(node2.min_order - node1.max_order),
         )
+
+        # prologue fusion always last
+        if node2.is_template():
+            template_score = 0
+        else:
+            template_score = 1 + (
+                (node1.is_template() == config.epilogue_fusion_first)
+                and memory_score > 0
+            )
+
         return (
-            node1.is_template() == config.epilogue_fusion_first and memory_score > 0,
+            template_score,
             node1.is_reduction() == node2.is_reduction() and memory_score > 0,
             memory_score,
             proximity_score,
@@ -3227,7 +3324,7 @@ class Scheduler:
 
     def score_fusion_key(
         self, nodes: Tuple[BaseSchedulerNode, BaseSchedulerNode]
-    ) -> Tuple[bool, bool, int, int]:
+    ) -> Tuple[int, bool, int, int]:
         """
         Shim for list.sort(key=...)
         """
@@ -3455,8 +3552,16 @@ class Scheduler:
             self.buffer_names_to_free.update(node.last_usage)
 
             if node.is_template():
-                node, *epilogue = node.get_nodes()
-                self.get_backend(device).codegen_template(node, epilogue)
+                nodes = list(node.get_nodes())
+                template_index = next(i for i, n in enumerate(nodes) if n.is_template())
+
+                prologue = nodes[:template_index]
+                template_node = nodes[template_index]
+                epilogue = nodes[template_index + 1 :]
+
+                self.get_backend(device).codegen_template(
+                    template_node, epilogue, prologue
+                )
             elif node.is_extern():
                 node = typing.cast(ExternKernelSchedulerNode, node)
                 self.codegen_extern_call(node)
@@ -3648,6 +3753,7 @@ class BaseScheduling:
         self,
         template_node: BaseSchedulerNode,
         epilogue_nodes: Sequence[BaseSchedulerNode],
+        prologue_nodes: Sequence[BaseSchedulerNode],
     ) -> Optional[str]:
         """
         Given a template node, generate a kernel.
