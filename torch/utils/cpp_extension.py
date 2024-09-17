@@ -325,7 +325,6 @@ def get_default_build_root() -> str:
     """
     return os.path.realpath(torch._appdirs.user_cache_dir(appname='torch_extensions'))
 
-
 def check_compiler_ok_for_platform(compiler: str) -> bool:
     """
     Verify that the compiler is the expected one for the current platform.
