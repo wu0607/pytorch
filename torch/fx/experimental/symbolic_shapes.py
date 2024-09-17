@@ -4933,7 +4933,11 @@ class ShapeEnv:
         if not expr.has(Mod):
             try:
                 floor_div_atoms = lhs.atoms(FloorDiv).union(rhs.atoms(FloorDiv))
-                if len(floor_div_atoms) > 0 and any(a.divisor != 1 for a in floor_div_atoms):
+                if (
+                    len(floor_div_atoms) > 0 and
+                    # NB: CleanDivs are supported but not non-trivial FloorDivs
+                    any(not isinstance(a, CleanDiv) and a.divisor != 1 for a in floor_div_atoms)
+                ):
                     raise NotImplementedError
 
                 # Never replace unbacked symbols with other unbacked symbols.
