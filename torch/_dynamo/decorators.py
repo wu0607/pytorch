@@ -6,11 +6,17 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, Type, TYPE_CHECKING, TypeVar
 
 import torch
+from torch._utils_internal import justknobs_check
 from torch.utils._python_dispatch import is_traceable_wrapper_subclass
 
-from . import trace_rules, variables
+from . import config, trace_rules, variables
 from .comptime import comptime
-from .eval_frame import DisableContext, innermost_fn, RunOnlyContext
+from .eval_frame import (
+    CompileEnabledContext,
+    innermost_fn,
+    OldDisableContext,
+    RunOnlyContext,
+)
 from .exc import IncorrectUsage
 from .external_utils import is_compiling
 from .utils import is_function
@@ -47,9 +53,17 @@ def run(fn=None):
     return RunOnlyContext()
 
 
+def _old_compile_disable_behavior():
+    return config.old_compile_disable_behavior or not justknobs_check(
+        "pytorch/compiler:compile_enable_disable"
+    )
+
+
 def disable(fn=None, recursive=True):
     """
-    Decorator and context manager to disable TorchDynamo
+    Decorator to disable TorchDynamo.
+
+    See note on torch.compiler.disable for details about the compile/disable/enable interaction.
 
     If recursive=True, Dynamo is completely skipped on the decorated function
     frame as well as the recursively invoked functions.
@@ -58,13 +72,33 @@ def disable(fn=None, recursive=True):
     but still process recursively invoked frames.
     """
     if recursive:
+        ctx = (
+            OldDisableContext()
+            if _old_compile_disable_behavior()
+            else CompileEnabledContext(False)
+        )
         if fn is not None:
-            fn = innermost_fn(fn)
+            if _old_compile_disable_behavior():
+                fn = innermost_fn(fn)
             assert callable(fn)
-            return DisableContext()(fn)
-        return DisableContext()
+            return ctx(fn)  # type: ignore[operator]
+        return ctx
     else:
         return skip(fn)
+
+
+def enable(fn=None):
+    """
+    Decorator to re-enable TorchDynamo - inverse of `disable`.
+
+    Compilation will only occur if there was a previous `compile` call.
+    """
+    if _old_compile_disable_behavior():
+        return fn
+    if fn is not None:
+        assert callable(fn)
+        return CompileEnabledContext(True)(fn)
+    return CompileEnabledContext(True)
 
 
 def skip(fn=None):

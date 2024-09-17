@@ -169,7 +169,7 @@ class OptimizedModule(torch.nn.Module):
 
     def _initialize(self):
         # Do this stuff in constructor to lower overhead slightly
-        if isinstance(self.dynamo_ctx, DisableContext):
+        if isinstance(self.dynamo_ctx, (CompileEnabledContext, OldDisableContext)):
             # No need to check trace rules
             self.forward = self.dynamo_ctx(self._orig_mod.__call__)
         elif isinstance(self._orig_mod.forward, types.MethodType) and (
@@ -590,7 +590,10 @@ class RunOnlyContext(_TorchDynamoContext):
         return (self.__class__, ())
 
 
-class DisableContext(_TorchDynamoContext):
+# Old disable context used to support previous compile/disable interaction
+# where the 2 had the same priority. Used in case the new behavior (CompileEnabledContext)
+# causes unexpected problems
+class OldDisableContext(_TorchDynamoContext):
     def __init__(self) -> None:
         super().__init__(callback=None)
 
@@ -643,6 +646,55 @@ class DisableContext(_TorchDynamoContext):
 
     def __reduce__(self):
         return (self.__class__, ())
+
+
+class CompileEnabledContext:
+    def __init__(self, enabled):
+        self.enabled = enabled
+
+    def __call__(self, fn):
+        # This code is a simplified version of _TorchDynamoContext.__call__.
+        # We just want to enable/disable the eval frame callback mechanism, so we
+        # don't have to check trace_rules or create any wrapper.
+        # But we still need to return a proper callable/wrapped module/wraped class.
+        if isinstance(fn, torch.nn.Module):
+            mod = fn
+            new_mod = OptimizedModule(mod, self)
+            return new_mod
+
+        if inspect.isclass(fn):
+            # User has wrapped the class with enable/disable decorator. Apply to init/call method.
+            cls_obj = fn
+            # Disable on init is useful for reconstruction of bytecodes where we
+            # want to prevent Dynamo from tracing into the init function. Check
+            # test_reconstruction in test_model_output.py.
+            cls_obj.__init__ = self(cls_obj.__init__)
+            cls_obj.__call__ = self(cls_obj.__call__)
+            if issubclass(cls_obj, torch.nn.Module):
+                # NN module variable tracker directly inlines the _call_impl. Enable/disable it.
+                cls_obj._call_impl = self(cls_obj._call_impl)
+            return cls_obj
+
+        assert callable(fn)
+
+        @functools.wraps(fn)
+        def _fn(*args, **kwargs):
+            from torch._C._dynamo.eval_frame import set_eval_frame_callback_enabled
+
+            prior = set_eval_frame_callback_enabled(self.enabled)
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                set_eval_frame_callback_enabled(prior)
+
+        if self.enabled:
+            # if dynamo is already enabled, and we are inlining, directly trace fn without going through _fn
+            _fn._torchdynamo_inline = fn  # type: ignore[attr-defined]
+        else:
+            # if dynamo is already enabled, use _torchdynamo_disable to skip going through _fn
+            _fn._torchdynamo_disable = True  # type: ignore[attr-defined]
+
+        return _fn
 
 
 def _optimize_catch_errors(
