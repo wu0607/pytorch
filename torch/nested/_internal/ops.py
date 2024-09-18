@@ -294,14 +294,34 @@ def jagged_binary_pointwise(func, *args, **kwargs):
                 mismatch_error_msg.format(func.__name__, a.shape, b.shape)
             )
 
-        # need to use offsets to broadcast across ragged dim properly
-        # NB: inefficient fallback here; Triton codegen can help this
-        # TODO: Make this work with autograd
-        outputs = []
-        for a_comp, b_comp in zip(a.unbind(), b.unbind()):
-            outputs.append(func(a_comp, b_comp, *args[2:], **kwargs))
-        new_values = torch.cat(outputs, dim=0)
-        return NestedTensor(new_values, **extracted_kwargs)
+        # handle broadcasting via jagged -> padded dense conversion
+        padded = nt.to_padded_tensor(0.0)
+
+        # broadcasting function call
+        lhs, rhs = (padded, t) if a_is_nt else (t, padded)
+        output_padded = func(lhs, rhs, *args[2:], **kwargs)
+
+        # padded dense -> jagged
+        total_L = nt._values.shape[0]
+
+        from .nested_tensor import _load_val_from_tensor, nested_from_padded
+
+        min_seqlen = None
+        if nt._min_seqlen_tensor is not None:
+            min_seqlen = _load_val_from_tensor(nt._min_seqlen_tensor)
+
+        max_seqlen = None
+        if nt._max_seqlen_tensor is not None:
+            max_seqlen = _load_val_from_tensor(nt._max_seqlen_tensor)
+
+        return nested_from_padded(
+            output_padded,
+            offsets=nt._offsets,
+            ragged_idx=nt._ragged_idx,
+            sum_S=total_L,
+            min_seqlen=min_seqlen,
+            max_seqlen=max_seqlen,
+        )
 
     # ex: (B, j0, D_0, D_1) + (A, B, 1, D_0, D_1) -> error because this breaks the invariant
     # that ragged dim is wrt left-most batch dim
@@ -1789,6 +1809,24 @@ def masked_select_default(func, *args, **kwargs):
         values=res_values,
         **args,
     )
+
+
+@register_jagged_func(
+    torch.ops.aten._nested_select_backward.default,
+    "grad_output: t, self: jt, dim: any, index: any",
+)
+def _nested_select_backward_default(func, *args, **kwargs):
+    _, new_kwargs = normalize_function(  # type: ignore[misc]
+        func, args=args, kwargs=kwargs, normalize_to_only_use_kwargs=True
+    )
+
+    inp = new_kwargs.pop("input")
+    grad_output = new_kwargs.pop("grad_output")
+
+    grad_input = torch.zeros_like(inp, dtype=grad_output.dtype)
+    grad_input.select(new_kwargs["dim"], new_kwargs["index"]).copy_(grad_output)
+
+    return grad_input
 
 
 # Make the dummy available on the C++ side.
