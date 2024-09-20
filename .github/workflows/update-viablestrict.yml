@@ -27,4 +27,4 @@ jobs:
           rockset-api-key: ${{ secrets.ROCKSET_API_KEY }}
       - name: Print sha
         run: |
-          echo "SHA: ${{ steps.update_viablestrict.outputs.sha }}"
+          echo "SHA: ${{ steps.update_viablestrict.outputs.latest_viable_sha }}"
