@@ -14,7 +14,6 @@ import torch.nn
 import torch.onnx.operators
 from torch._dynamo.utils import get_fake_value
 from torch._dynamo.variables import ConstantVariable
-from torch._dynamo.variables.base import VariableTracker
 from torch._dynamo.variables.builtin import BuiltinVariable
 from torch._dynamo.variables.functions import UserFunctionVariable
 from torch._dynamo.variables.tensor import SymNodeVariable
@@ -32,6 +31,7 @@ from ..exc import (
 )
 from ..source import AttrSource
 from ..utils import proxy_args_kwargs
+from .base import VariableTracker
 from .dicts import ConstDictVariable
 from .lazy import LazyVariableTracker
 from .lists import ListVariable, TupleVariable
@@ -1036,7 +1036,7 @@ class AssociativeScanHigherOrderVariable(TorchHigherOrderOperatorVariable):
         args: List[VariableTracker],
         kwargs: Dict[str, VariableTracker],
     ) -> VariableTracker:
-        from .builder import SourcelessBuilder, wrap_fx_proxy
+        from .builder import wrap_fx_proxy
 
         args, kwargs = LazyVariableTracker.realize_all((args, kwargs))
 
@@ -1058,7 +1058,7 @@ class AssociativeScanHigherOrderVariable(TorchHigherOrderOperatorVariable):
                 tx,
                 "new_empty",
                 args=(
-                    SourcelessBuilder.create(
+                    VariableTracker.create(
                         tx,
                         leaf.size
                         if leaf.size is not None
@@ -1068,8 +1068,8 @@ class AssociativeScanHigherOrderVariable(TorchHigherOrderOperatorVariable):
                     ),
                 ),
                 kwargs={
-                    "dtype": SourcelessBuilder.create(tx, leaf.dtype),
-                    "requires_grad": SourcelessBuilder.create(tx, leaf.requires_grad),
+                    "dtype": VariableTracker.create(tx, leaf.dtype),
+                    "requires_grad": VariableTracker.create(tx, leaf.requires_grad),
                 },
             )
             for leaf in itertools.chain(xs.items, xs.items)
@@ -1148,7 +1148,7 @@ class ScanHigherOrderVariable(TorchHigherOrderOperatorVariable):
     ) -> VariableTracker:
         from torch._higher_order_ops.scan import make_expanded_output_shape
 
-        from .builder import SourcelessBuilder, wrap_fx_proxy
+        from .builder import wrap_fx_proxy
 
         args, kwargs = LazyVariableTracker.realize_all((args, kwargs))
 
@@ -1191,7 +1191,7 @@ class ScanHigherOrderVariable(TorchHigherOrderOperatorVariable):
                 tx,
                 "new_empty",
                 args=(
-                    SourcelessBuilder.create(
+                    VariableTracker.create(
                         tx,
                         ini.size
                         if ini.size is not None
@@ -1205,9 +1205,9 @@ class ScanHigherOrderVariable(TorchHigherOrderOperatorVariable):
                     ),
                 ),
                 kwargs={
-                    "dtype": SourcelessBuilder.create(tx, ini.dtype),
-                    "device": SourcelessBuilder.create(tx, ini.device),
-                    "requires_grad": SourcelessBuilder.create(tx, ini.requires_grad),
+                    "dtype": VariableTracker.create(tx, ini.dtype),
+                    "device": VariableTracker.create(tx, ini.device),
+                    "requires_grad": VariableTracker.create(tx, ini.requires_grad),
                 },
             )
             for ini in init.items
@@ -1229,11 +1229,11 @@ class ScanHigherOrderVariable(TorchHigherOrderOperatorVariable):
             inp.call_method(
                 tx,
                 "new_empty",
-                args=(SourcelessBuilder.create(tx, inp_sh),),
+                args=(VariableTracker.create(tx, inp_sh),),
                 kwargs={
-                    "dtype": SourcelessBuilder.create(tx, inp.dtype),
-                    "device": SourcelessBuilder.create(tx, inp.device),
-                    "requires_grad": SourcelessBuilder.create(tx, inp.requires_grad),
+                    "dtype": VariableTracker.create(tx, inp.dtype),
+                    "device": VariableTracker.create(tx, inp.device),
+                    "requires_grad": VariableTracker.create(tx, inp.requires_grad),
                 },
             )
             for inp, inp_sh in zip(xs.items, sub_args_inp_shapes)
@@ -2017,17 +2017,15 @@ class FlexAttentionHigherOrderVariable(TorchHigherOrderOperatorVariable):
     ):
         from torch._higher_order_ops.flex_attention import TransformGetItemToIndex
 
-        from .builder import SourcelessBuilder
-
         tx: InstructionTranslator = tx
 
         def create_scalar():
             return query.call_method(
                 tx,
                 "new_empty",
-                (SourcelessBuilder.create(tx, []),),
+                (VariableTracker.create(tx, []),),
                 {
-                    "dtype": SourcelessBuilder.create(tx, torch.int32),
+                    "dtype": VariableTracker.create(tx, torch.int32),
                 },
             )
 
@@ -2037,8 +2035,8 @@ class FlexAttentionHigherOrderVariable(TorchHigherOrderOperatorVariable):
             score = query.call_method(
                 tx,
                 "new_empty",
-                (SourcelessBuilder.create(tx, []),),
-                {"requires_grad": SourcelessBuilder.create(tx, scores_require_grad)},
+                (VariableTracker.create(tx, []),),
+                {"requires_grad": VariableTracker.create(tx, scores_require_grad)},
             )
             new_args = [score, *bhmn]
         else:
