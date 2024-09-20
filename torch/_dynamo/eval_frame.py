@@ -317,6 +317,7 @@ class _TorchDynamoContext:
         self.compiler_config = compiler_config
         self.cleanup_fns: List[Callable[[], Any]] = []
         self.enter_exit_hooks = []
+        self.warmup_count = 0
         patch_fn()
 
         # Save the backends so that we can reset them during torch._dynamo.reset
@@ -343,6 +344,22 @@ class _TorchDynamoContext:
 
             self.enter_exit_hooks.append(call_backend_ctx)
 
+    def maybe_warmup(self, callback, state):
+        assert state in ["enter", "exit"]
+        if config.warmup_runs == 0:
+            return callback
+        else:
+            if torch._dynamo.compiled_autograd.in_compiled_autograd_region:
+                # Compiled Autograd Dynamo warmup is handled within `torch._dynamo.compiled_autograd.enable()`.
+                return callback
+            else:
+                if state == "enter":
+                    return None if self.warmup_count < config.warmup_runs else callback
+                elif state == "exit":
+                    if self.warmup_count < config.warmup_runs:
+                        self.warmup_count += 1
+                    return callback
+
     def __enter__(self):
         if config.raise_on_ctx_manager_usage:
             raise RuntimeError(
@@ -351,11 +368,11 @@ class _TorchDynamoContext:
                 "to use torch._dynamo.optimize(...) as an annotation/decorator. "
             )
         self.cleanup_fns = [enter() for enter in self.enter_exit_hooks]
-        self.prior = _maybe_set_eval_frame(self.callback)
+        self.prior = _maybe_set_eval_frame(self.maybe_warmup(self.callback, "enter"))
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         assert self.prior is not unset
-        _maybe_set_eval_frame(self.prior)
+        _maybe_set_eval_frame(self.maybe_warmup(self.prior, "exit"))
         self.prior = unset
         for cleanup in self.cleanup_fns:
             cleanup()
@@ -449,7 +466,7 @@ class _TorchDynamoContext:
                     return fn(*args, **kwargs)
 
             cleanups = [enter() for enter in self.enter_exit_hooks]
-            prior = _maybe_set_eval_frame(callback)
+            prior = _maybe_set_eval_frame(self.maybe_warmup(callback, "enter"))
 
             # Ensure that if an assertion occurs after graph pushes
             # something onto the DynamicLayerStack then we pop it off (the
@@ -469,7 +486,7 @@ class _TorchDynamoContext:
                     saved_dynamic_layer_stack_depth
                 )
 
-                _maybe_set_eval_frame(prior)
+                _maybe_set_eval_frame(self.maybe_warmup(prior, "exit"))
                 for cleanup in cleanups:
                     cleanup()
 
@@ -555,14 +572,20 @@ class OptimizeContext(_TorchDynamoContext):
             compiler_config=compiler_config,
         )
 
+        self.compiled_autograd_ctx = None
         if config.compiled_autograd:
 
             def call_compiled_autograd():
-                assert rebuild_ctx is not None
-                compiler_fn = rebuild_ctx()
-                ctx = torch._dynamo.compiled_autograd.enable(compiler_fn)
-                ctx.__enter__()
-                return functools.partial(ctx.__exit__, None, None, None)
+                if self.compiled_autograd_ctx is None:
+                    assert rebuild_ctx is not None
+                    compiler_fn = rebuild_ctx()
+                    self.compiled_autograd_ctx = torch._dynamo.compiled_autograd.enable(
+                        compiler_fn
+                    )
+                self.compiled_autograd_ctx.__enter__()
+                return functools.partial(
+                    self.compiled_autograd_ctx.__exit__, None, None, None
+                )
 
             self.enter_exit_hooks.append(call_compiled_autograd)
 
@@ -627,11 +650,11 @@ class DisableContext(_TorchDynamoContext):
 
         @functools.wraps(fn)
         def _fn(*args, **kwargs):
-            prior = _maybe_set_eval_frame(callback)
+            prior = _maybe_set_eval_frame(self.maybe_warmup(callback, "enter"))
             try:
                 return fn(*args, **kwargs)
             finally:
-                _maybe_set_eval_frame(prior)
+                _maybe_set_eval_frame(self.maybe_warmup(prior, "exit"))
 
         _fn._torchdynamo_disable = True  # type: ignore[attr-defined]
 
