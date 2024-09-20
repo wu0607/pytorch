@@ -16,10 +16,14 @@ jobs:
     environment: ${{ (github.event_name == 'schedule') && 'mergebot' || '' }}
     steps:
       - name: Update viable/strict
-        uses: pytorch/test-infra/.github/actions/update-viablestrict@main
+        uses: pytorch/test-infra/.github/actions/update-viablestrict@csl/output_strict_sha
+        id: update_viablestrict
         with:
           repository: pytorch/pytorch
           stable-branch: viable/strict
           requires: '[\"pull\", \"trunk\", \"lint\", \"linux-binary\"]'
           secret-bot-token: ${{ secrets.MERGEBOT_TOKEN }}
           rockset-api-key: ${{ secrets.ROCKSET_API_KEY }}
+      - name: Print sha
+        run: |
+          echo "SHA: ${{ steps.update_viablestrict.outputs.sha }}"
